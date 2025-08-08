@@ -51,6 +51,20 @@ def is_null(value):
 
 
 # Calculation functions
+def calculate_offloading_truck_id(row):
+    """Calculate OFFLOADING_TRUCK_ID based on priority order"""
+    if is_not_null(row['ZAM_TRUCK_ID_BAG_MIRROR']):
+        return safe_str(row['ZAM_TRUCK_ID_BAG_MIRROR'])
+    elif is_not_null(row['DRC_WAGON_ID_BAG_MIRROR']):
+        return safe_str(row['DRC_WAGON_ID_BAG_MIRROR'])
+    elif is_not_null(row['EXPORT_TRUCK_ID_BAG_MIRROR']):
+        return safe_str(row['EXPORT_TRUCK_ID_BAG_MIRROR'])
+    elif is_not_null(row['SHUNT_TRUCK_ID_BAG_MIRROR']):
+        return safe_str(row['SHUNT_TRUCK_ID_BAG_MIRROR'])
+    else:
+        return ""
+
+
 def calculate_live_current_activity(row):
     """Calculate LIVE_CURRENT_ACTIVITY"""
     if row['BAG_FLAG_STATUS_UPL'] == "Insurance Claim":
@@ -214,18 +228,22 @@ def validate_template(df):
 
 
 def process_data(df):
-    """Process data with proper dependency chain: ACTIVITY → ACTIVITY_1 → ACTIVITY_2"""
+    """Process data with proper dependency chain: OFFLOADING_TRUCK_ID → ACTIVITY → ACTIVITY_1 → ACTIVITY_2"""
     df_processed = df.copy()
 
-    # Step 1: Calculate LIVE_CURRENT_ACTIVITY
+    # Step 1: Calculate OFFLOADING_TRUCK_ID (independent)
+    df_processed['OFFLOADING_TRUCK_ID_CORRECTED'] = df_processed.apply(calculate_offloading_truck_id, axis=1)
+    df_processed['OFFLOADING_TRUCK_ID'] = df_processed['OFFLOADING_TRUCK_ID_CORRECTED']
+
+    # Step 2: Calculate LIVE_CURRENT_ACTIVITY
     df_processed['LIVE_CURRENT_ACTIVITY_CORRECTED'] = df_processed.apply(calculate_live_current_activity, axis=1)
     df_processed['LIVE_CURRENT_ACTIVITY'] = df_processed['LIVE_CURRENT_ACTIVITY_CORRECTED']
 
-    # Step 2: Calculate LIVE_CURRENT_ACTIVITY_1 (depends on corrected LIVE_CURRENT_ACTIVITY)
+    # Step 3: Calculate LIVE_CURRENT_ACTIVITY_1 (depends on corrected LIVE_CURRENT_ACTIVITY)
     df_processed['LIVE_CURRENT_ACTIVITY_1_CORRECTED'] = df_processed.apply(calculate_live_current_activity_1, axis=1)
     df_processed['LIVE_CURRENT_ACTIVITY_1'] = df_processed['LIVE_CURRENT_ACTIVITY_1_CORRECTED']
 
-    # Step 3: Calculate LIVE_CURRENT_ACTIVITY_2 (depends on both corrected values)
+    # Step 4: Calculate LIVE_CURRENT_ACTIVITY_2 (depends on both corrected values)
     df_processed['LIVE_CURRENT_ACTIVITY_2_CORRECTED'] = df_processed.apply(calculate_live_current_activity_2, axis=1)
 
     return df_processed
@@ -234,7 +252,7 @@ def process_data(df):
 def create_comparison_df(original_df, processed_df):
     """Create comparison dataframe at name level"""
     comparison_data = []
-    target_cols = ['LIVE_CURRENT_ACTIVITY', 'LIVE_CURRENT_ACTIVITY_1', 'LIVE_CURRENT_ACTIVITY_2']
+    target_cols = ['OFFLOADING_TRUCK_ID', 'LIVE_CURRENT_ACTIVITY', 'LIVE_CURRENT_ACTIVITY_1', 'LIVE_CURRENT_ACTIVITY_2']
 
     for idx, row in original_df.iterrows():
         name = safe_str(row['name'])
@@ -259,13 +277,14 @@ def create_comparison_df(original_df, processed_df):
 def create_excel_download(processed_df):
     """Create Excel file for download"""
     final_df = processed_df.copy()
+    final_df['OFFLOADING_TRUCK_ID'] = final_df['OFFLOADING_TRUCK_ID_CORRECTED']
     final_df['LIVE_CURRENT_ACTIVITY'] = final_df['LIVE_CURRENT_ACTIVITY_CORRECTED']
     final_df['LIVE_CURRENT_ACTIVITY_1'] = final_df['LIVE_CURRENT_ACTIVITY_1_CORRECTED']
     final_df['LIVE_CURRENT_ACTIVITY_2'] = final_df['LIVE_CURRENT_ACTIVITY_2_CORRECTED']
 
     # Remove temporary columns
-    cols_to_remove = ['LIVE_CURRENT_ACTIVITY_CORRECTED', 'LIVE_CURRENT_ACTIVITY_1_CORRECTED',
-                      'LIVE_CURRENT_ACTIVITY_2_CORRECTED']
+    cols_to_remove = ['OFFLOADING_TRUCK_ID_CORRECTED', 'LIVE_CURRENT_ACTIVITY_CORRECTED',
+                      'LIVE_CURRENT_ACTIVITY_1_CORRECTED', 'LIVE_CURRENT_ACTIVITY_2_CORRECTED']
     final_df = final_df.drop(columns=cols_to_remove)
 
     output = BytesIO()
@@ -316,7 +335,7 @@ if uploaded_file is not None:
             with col2:
                 st.metric("Corrections Made", len(comparison_df))
             with col3:
-                correction_rate = (len(comparison_df) / (len(df) * 3)) * 100 if len(df) > 0 else 0
+                correction_rate = (len(comparison_df) / (len(df) * 4)) * 100 if len(df) > 0 else 0
                 st.metric("Correction Rate", f"{correction_rate:.1f}%")
             with col4:
                 affected_names = len(comparison_df['Name'].unique()) if len(comparison_df) > 0 else 0
@@ -351,13 +370,13 @@ if uploaded_file is not None:
             # Preview
             if st.checkbox("Show corrected data preview"):
                 st.markdown("### Corrected Data Preview")
-                preview_df = processed_df.copy()
+                preview_df['OFFLOADING_TRUCK_ID'] = preview_df['OFFLOADING_TRUCK_ID_CORRECTED']
                 preview_df['LIVE_CURRENT_ACTIVITY'] = preview_df['LIVE_CURRENT_ACTIVITY_CORRECTED']
                 preview_df['LIVE_CURRENT_ACTIVITY_1'] = preview_df['LIVE_CURRENT_ACTIVITY_1_CORRECTED']
                 preview_df['LIVE_CURRENT_ACTIVITY_2'] = preview_df['LIVE_CURRENT_ACTIVITY_2_CORRECTED']
 
-                preview_cols = ['name', 'BAG_LOT_NO_BAG_MIRROR', 'LIVE_CURRENT_ACTIVITY', 'LIVE_CURRENT_ACTIVITY_1',
-                                'LIVE_CURRENT_ACTIVITY_2']
+                preview_cols = ['name', 'BAG_LOT_NO_BAG_MIRROR', 'OFFLOADING_TRUCK_ID', 'LIVE_CURRENT_ACTIVITY',
+                                'LIVE_CURRENT_ACTIVITY_1', 'LIVE_CURRENT_ACTIVITY_2']
                 st.dataframe(preview_df[preview_cols], height=400)
 
     except Exception as e:
@@ -378,4 +397,4 @@ else:
 
 st.markdown("---")
 st.markdown(
-    "*This application recalculates LIVE_CURRENT_ACTIVITY, LIVE_CURRENT_ACTIVITY_1, and LIVE_CURRENT_ACTIVITY_2 columns based on business logic requirements.*")
+    "*This application recalculates OFFLOADING_TRUCK_ID, LIVE_CURRENT_ACTIVITY, LIVE_CURRENT_ACTIVITY_1, and LIVE_CURRENT_ACTIVITY_2 columns based on business logic requirements.*")
